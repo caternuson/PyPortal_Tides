@@ -12,8 +12,7 @@ cwd = ("/"+__file__).rsplit('/', 1)[0]
 pyportal = PyPortal(url=DATA_SOURCE,
                     json_path=DATA_LOCATION,
                     status_neopixel=board.NEOPIXEL,
-                    default_bg=cwd+"/tides_bg.bmp",
-                    debug=True)
+                    default_bg=cwd+"/tides_bg.bmp")
 
 tide_font = bitmap_font.load_font(cwd+"/fonts/cq-mono-30.bdf")
 tide_font.load_glyphs(b'1234567890:')
