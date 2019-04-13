@@ -1,16 +1,26 @@
 import time
-import math
 import board
 import displayio
 from adafruit_pyportal import PyPortal
 from adafruit_bitmap_font import bitmap_font
 from adafruit_display_text.label import Label
 
-STATION_ID = "9447130" # find yours here: https://tidesandcurrents.noaa.gov/
-UPDATE_TIME = 3 # 24 hour based time, ex: 3 = 3AM
+#--| USER CONFIG |--------------------------
+STATION_ID = "9447130"   # tide location, find yours here: https://tidesandcurrents.noaa.gov/
+PLOT_SIZE = 2            # tide plot thickness
+PLOT_COLOR = 0x00FF55    # tide plot color
+MARK_SIZE = 6            # current time marker size
+MARK_COLOR = 0xFF0000    # current time marker color
+DATE_COLOR = 0xE0CD1A    # date text color
+TIME_COLOR = 0xE0CD1A    # time text color
+VSCALE = 20              # vertical plot scale
+#-------------------------------------------
 
 DATA_SOURCE = "https://tidesandcurrents.noaa.gov/api/datagetter?date=today&product=predictions&datum=mllw&format=json&units=metric&time_zone=lst_ldt&station="+STATION_ID
 DATA_LOCATION = ["predictions"]
+
+WIDTH = board.DISPLAY.width
+HEIGHT = board.DISPLAY.height
 
 # determine the current working directory needed so we know where to find files
 cwd = ("/"+__file__).rsplit('/', 1)[0]
@@ -22,82 +32,121 @@ pyportal = PyPortal(url=DATA_SOURCE,
 # Connect to the internet and get local time
 pyportal.get_local_time()
 
-# Setup tide plot bitmap
-VSCALE = 20
-WIDTH = board.DISPLAY.width
-HEIGHT = board.DISPLAY.height
-tide_plot = displayio.Bitmap(WIDTH, HEIGHT, 3)
+# Setup palette used for plot
 palette = displayio.Palette(3)
 palette[0] = 0x0
-palette[1] = 0xFFFFFF   # plot color
-palette[2] = 0xFF0000   # current time
+palette[1] = PLOT_COLOR
+palette[2] = MARK_COLOR
 palette.make_transparent(0)
-#tide_plot = displayio.TileGrid(canvas, pixel_shader=palette)
 
-# Add tide plot to display
+# Setup tide plot bitmap
+tide_plot = displayio.Bitmap(WIDTH, HEIGHT, 3)
 pyportal.splash.append(displayio.TileGrid(tide_plot, pixel_shader=palette))
 
-# Setup date label
-date_font = bitmap_font.load_font(cwd+"/fonts/Arial-12.bdf")
+# Setup font used for date and time
+date_font = bitmap_font.load_font(cwd+"/fonts/mono-bold-8.bdf")
 date_font.load_glyphs(b'1234567890-')
-DATE_LABEL = Label(date_font, text="0000-00-00", color=0xFFFFFF, x=230, y=14)
-pyportal.splash.append(DATE_LABEL)
 
-def update_display():
-    # Fetch data from NOAA
-    tide_data = pyportal.fetch()
+# Setup date label
+date_label = Label(date_font, text="0000-00-00", color=DATE_COLOR, x=7, y=14)
+pyportal.splash.append(date_label)
 
-    t = time.localtime()
-    xc  = int(((WIDTH - 1) / 1439) * (60*float(t.tm_hour) + float(t.tm_min)))
+# Setup time label
+time_label = Label(date_font, text="00:00:00", color=TIME_COLOR, x=234, y=14)
+pyportal.splash.append(time_label)
 
-    # Main tide data plot
-    for data in tide_data:
+# Setup current time marker
+time_marker_bitmap = displayio.Bitmap(MARK_SIZE, MARK_SIZE, 3)
+for i in range(MARK_SIZE * MARK_SIZE):
+    time_marker_bitmap[i] = 2
+time_marker = displayio.TileGrid(time_marker_bitmap, pixel_shader=palette, x=-MARK_SIZE, y=-MARK_SIZE)
+pyportal.splash.append(time_marker)
+
+def get_tide_data():
+    """Fetch JSON tide data and return it."""
+
+    # Get raw JSON data
+    raw_data = pyportal.fetch()
+
+    # Results will be stored in a list that is display WIDTH long
+    tide_data = [None]*WIDTH
+
+    # Convert raw data to display coordinates
+    for data in raw_data:
         d, t = data["t"].split(" ") # date and time
         h, m = t.split(":")         # hours and minutes
         v = data["v"]               # water level
-        x = int(((WIDTH - 1) / 1439) * (60*float(h) + float(m)))
-        y = (HEIGHT // 2) - int(VSCALE * float(v))
+        x = round( (WIDTH - 1) * (60 * float(h) + float(m)) / 1440 )
+        y = (HEIGHT // 2) - round(VSCALE * float(v))
         y = 0 if y < 0 else y
         y = HEIGHT-1 if y >= HEIGHT else y
-        if x == xc:
-            yc = y
-        try:
-            tide_plot[x-1, y-1] = 1
-            tide_plot[x  , y-1] = 1
-            tide_plot[x+1, y-1] = 1
+        tide_data[x] = y
 
-            tide_plot[x-1, y  ] = 1
-            tide_plot[x  , y  ] = 1
-            tide_plot[x+1, y  ] = 1
+    return tide_data
 
-            tide_plot[x-1, y+1] = 1
-            tide_plot[x  , y+1] = 1
-            tide_plot[x+1, y+1] = 1
-        except IndexError:
-            pass
+def draw_data_point(x, y, size=PLOT_SIZE, color=1):
+    """Draw data point on to the tide plot bitmap at (x,y)."""
+    if y is None:
+        return
+    offset = size // 2
+    for xx in range(x-offset, x+offset+1):
+        for yy in range(y-offset, y+offset+1):
+            try:
+                tide_plot[xx, yy] = color
+            except IndexError:
+                pass
 
-    DATE_LABEL.text = d
+def draw_time_marker(current_time):
+    """Draw a marker on the tide plot for the current time."""
+    h = current_time.tm_hour
+    m = current_time.tm_min
+    x = round( (WIDTH - 1) * (60 * float(h) + float(m)) / 1440 )
+    y = tide_data[x]
+    if y is not None:
+        x -= MARK_SIZE // 2
+        y -= MARK_SIZE // 2
+        time_marker.x = x
+        time_marker.y = y
 
-    # Current time location marker
-    try:
-        steps = 50
-        dd = 2 * math.pi / steps
-        for r in range(3, 6):
-            o = 0.0
-            for _ in range(steps):
-                x = int(xc + r * math.cos(o))
-                y = int(yc + r * math.sin(o))
-                tide_plot[(x , y)] = 2
-                o += dd
-    except IndexError:
-        pass
+def update_display(update_tides=False):
+    """Update the display with current info."""
+    current_time = time.localtime()
+
+    # Tide data plot
+    if update_tides:
+        # out with the old
+        for i in range(WIDTH * HEIGHT):
+            tide_plot[i] = 0
+        # in with the new
+        for x in range(WIDTH):
+            draw_data_point(x, tide_data[x])
+
+    # Current location marker
+    draw_time_marker(current_time)
+
+    # Date and time
+    date_label.text = "{:04}-{:02}-{:02}".format(current_time.tm_year,
+                                                 current_time.tm_mon,
+                                                 current_time.tm_mday)
+    time_label.text = "{:02}:{:02}:{:02}".format(current_time.tm_hour,
+                                                 current_time.tm_min,
+                                                 current_time.tm_sec)
+
+    board.DISPLAY.refresh_soon()
 
 # First run update
-update_display()
+tide_data = get_tide_data()
+update_display(True)
+current_yday = time.localtime().tm_yday
 
-# Update daily
+# Run forever
 while True:
-    if time.localtime().tm_hour == UPDATE_TIME:
-        update_display()
-        time.sleep(23 * 60 * 60)
-    time.sleep(300)
+    current_time = time.localtime()
+    new_tides = False
+    if current_time.tm_yday != current_yday:
+        # new day, time to update
+        tide_data = get_tide_data()
+        new_tides = True
+        current_yday = current_time.tm_yday
+    update_display(new_tides)
+    time.sleep(0.5)
