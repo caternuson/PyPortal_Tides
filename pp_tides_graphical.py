@@ -63,7 +63,7 @@ time_marker = displayio.TileGrid(time_marker_bitmap, pixel_shader=palette, x=-MA
 pyportal.splash.append(time_marker)
 
 def get_tide_data():
-    """Fetch JSON tide data and return it."""
+    """Fetch JSON tide data and return parsed results in a list."""
 
     # Get raw JSON data
     raw_data = pyportal.fetch()
@@ -108,9 +108,8 @@ def draw_time_marker(current_time):
         time_marker.x = x
         time_marker.y = y
 
-def update_display(update_tides=False):
+def update_display(current_time, update_tides=False):
     """Update the display with current info."""
-    current_time = time.localtime()
 
     # Tide data plot
     if update_tides:
@@ -136,8 +135,9 @@ def update_display(update_tides=False):
 
 # First run update
 tide_data = get_tide_data()
-update_display(True)
-current_yday = time.localtime().tm_yday
+current_time = time.localtime()
+update_display(current_time, True)
+current_yday = current_time.tm_yday
 
 # Run forever
 while True:
@@ -148,5 +148,5 @@ while True:
         tide_data = get_tide_data()
         new_tides = True
         current_yday = current_time.tm_yday
-    update_display(new_tides)
+    update_display(current_time, new_tides)
     time.sleep(0.5)
